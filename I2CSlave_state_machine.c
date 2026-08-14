@@ -60,7 +60,7 @@ i2c_slaveSM_command_t *get_command(uint8_t command_code) {
 }
 
 
-void i2c_slaveSM_requested(request_t req_type) {
+void i2c_slaveSM_requested(i2c_request_t req_type) {
     switch(req_type) {
          case INITIAL:
             if (status == READY) {

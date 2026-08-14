@@ -7,23 +7,26 @@ bool receiving = false;
 bool i2c_configured =false;
 
 // f_twi = 1 / 16 + 2*TWBR*prescale
-// We assume F_CPU to be 16MHz, prescale=1 ==> TWBR=144/2
-#if F_CPU != 16000000
-#error F_CPU must be 16000000 for i²c clock to be correct
+#if F_CPU == 16000000
+    #define TWBR_value 72
+#elif F_CPU == 8000000
+    #define TWBR_value 32
+#else
+    #error F_CPU must be either 16000000 or 8000000 for i²c clock to be correct
 #endif
 
 #define check_i2c_conf() {\
    if (!i2c_configured) {\
         DDRD |= (1<<PD4) | (1<<PD3);\
         PORTD |= (1<<PD4) | (1<<PD3);\
-        TWBR = 72;\
+        TWBR = TWBR_value;\
         i2c_configured = true;\
    }\
 }
 
 
 static void (*i2c_slave_recv)(uint8_t);
-static void (*i2c_slave_req)(request_t);
+static void (*i2c_slave_req)(i2c_request_t);
 static void (*i2c_slave_receive_start)(void);
 //static void (*i2c_slave_receive_stop)(void);
 
@@ -31,7 +34,7 @@ static void (*i2c_slave_receive_start)(void);
 void i2c_slave_setCallbacks(void (*start)(void),
                             void (*recv)(uint8_t),
                             //void (*stop)(void),
-                            void (*req)(request_t))
+                            void (*req)(i2c_request_t))
 {
   i2c_slave_recv = recv;
   i2c_slave_req = req;
@@ -55,6 +58,7 @@ uint8_t i2c_master_init(uint8_t slave_addressed, i2c_master_mode_t mode) {
     check_i2c_conf();
 
     //wait for pending RX operation to complete
+    //TODO : add a delay ?
     while(receiving) PORTD ^= PD5;
 
     PORTD |= 1<<PD5;
@@ -173,7 +177,8 @@ ISR(TWI_vect)
       receiving = false;
       break;
     case TW_BUS_ERROR:
-      // some sort of erroneous state, nothing to do as for now...
+      // some sort of erroneous state, not much to do as for now...
+      receiving = false;
       break;
     default:
       break;
