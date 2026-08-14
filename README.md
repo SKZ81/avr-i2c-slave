@@ -26,7 +26,7 @@ eg:
 void I2C_received(uint8_t data);
 void I2C_requested();
 
-I2C_setCallbacks(I2C_received, I2C_requested);
+i2c_slave_setCallbacks(I2C_received, I2C_requested);
 ```
 
 The library calls the received callback *for each byte* the master transmits to the slave.
@@ -34,12 +34,12 @@ The library calls the requested callback *for each byte* the master attempts to 
 
 **Init the I2C slave with the slave address**
 ```c
-I2C_init(I2C_ADDRESS);
+i2c_slave_init(I2C_ADDRESS);
 ```
 
 **Transmitting data to the master when requested**
 ```c
-I2C_transmitByte(data);
+i2c_slave_transmitByte(data);
 ```
 
 Example
@@ -50,3 +50,51 @@ and then will echo the byte when requested.
 
 To compile:
 `make`
+
+
+## I²C Slave State Machine
+
+It provides a higher-level API, with "standardized" implementation of I2C_received() and I2C_requested() as well as a state machine to receive master commands and arguments, and transmit answers.
+
+The client application has to:
+
+### Include state machine header
+```c
+#include "I2CSlave_state_machine.h"
+```
+
+### define a command array
+The command array is declaring:
+* the command code
+* number of bytes to read (variable length not managed)
+* the callback to process the command
+
+eg :
+```c
+i2c_slaveSM_command_t commands = {
+    {COMMAND_ID1, 0, do_command1}, // a command with no argument, returning 1 byte as a response
+    {COMMAND_ID2, 2, do_command2}, // a command with 2 bytes as argument, no response
+    {...}
+};
+```
+
+The callback (like do_command2) is passed the buffer with stored arguments from master, process it, and store answer in the same buffer.
+It return the response length, or -1 in case of failure.
+
+*NOTE*: The slave is put in busy state while processing the command.
+
+### Declare a buffer
+
+large enough to store arguments AND response for ANY command.
+
+### Initialize the SM
+```c
+i2c_slaveSM_init(I2C_address,
+                 commands, nb_commands,
+                 buffer, buffer_size);
+```
+
+NOTE: in the call from client app nb_commands can be substituted by `sizeof(commands)/sizeof(i2c_slaveSM_command_t)`
+
+### And that's all done
+Then, the app can completely "forgets" about i²c "low-level" management.
