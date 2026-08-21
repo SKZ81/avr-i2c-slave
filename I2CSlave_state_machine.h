@@ -10,7 +10,7 @@ typedef struct {
 } i2c_slaveSM_command_t;
 
 // === I²C slave State Machine initialization ===
-void i2c_slaveSM_init(uint8_t i2c_address,
+void i2c_slaveSM_init(uint8_t i2c_address, uint32_t frequency,
                       i2c_slaveSM_command_t *commands,
                       unsigned int nb_commands,
                       uint8_t *buffer,

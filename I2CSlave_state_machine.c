@@ -1,6 +1,7 @@
 #include "I2CSlave.h"
 #include "I2CSlave_state_machine.h"
 #include <avr/pgmspace.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stddef.h>
 
@@ -18,6 +19,7 @@
 typedef enum {
     WAITING = 0,
     READING_ARGS,
+    EXECUTE_COMMAND,
     READY,
     TALKING
 } i2c_slaveSM_status_t;
@@ -29,7 +31,7 @@ static i2c_slaveSM_command_t *current_command = NULL;
 static i2c_slaveSM_status_t status;
 
 static uint8_t *buffer = NULL;
-unsigned int buffer_size;
+static unsigned int buffer_size;
 
 static uint8_t buffer_index = 0;
 static uint8_t reply_len = 0;
@@ -60,7 +62,9 @@ i2c_slaveSM_command_t *get_command(uint8_t command_code) {
 }
 
 
-void i2c_slaveSM_requested(i2c_request_t req_type) {
+bool i2c_slaveSM_requested(i2c_request_t req_type) {
+    bool last_data = false;
+
     switch(req_type) {
          case INITIAL:
             if (status == READY) {
@@ -68,50 +72,54 @@ void i2c_slaveSM_requested(i2c_request_t req_type) {
             } else {
                 // we were not READY to reply, then forget all previous crap said by master
                 dbg("Initial query but state is not READY (status == %d)\n", status);
-                reset_state();
-                break;
+                goto protocol_error;
             }
         // NOTE : if no error => no break !! execute following statement
         case CONTINUATION:
             if (status != TALKING) {
                 dbg("Requested to tranmit data, while not in TALKING state (status == %d)\n", status);
-                reset_state();
-                break;
+                goto protocol_error;
             }
             if (buffer_index >= reply_len) {
+                // NB : thanks to last_data management, this should not happend.
                 // abnormal situation, give a trace here
                 dbg("ERR : buffer_index >= reply_len\n");
-                reset_state();
-                break;
+                goto protocol_error;
             }
-            dbg("send I2C data : %x %s\n", buffer[buffer_index], (buffer_index+1)==reply_len?"(last)":"");
+            last_data = ((buffer_index+1)==reply_len);
+            dbg("send I2C data : %x %s\n", buffer[buffer_index], last_data?"(last)":"");
             i2c_slave_transmitByte(buffer[buffer_index]);
             buffer_index++;
+            break;
+        case DONE:
             if (buffer_index == reply_len) { // We're done !!
                 dbg("Succesfully transmitted %d bytes\n", reply_len);
-                reset_state();
+            } else {
+                dbg("Trnasmition aborted early (%d / %d bytes sended)", buffer_index, reply_len);
             }
+            reset_state();
             break;
-
-//         case DONE:
-//             if (status != WAIT_DONE) {
-//                 dbg("'warning !! got i2c request 'DONE', while status not DONE (status == %d)\n", status);
-//             } else {
-//                 dbg("Communication end.\n");
-//             }
-//             reset_state();
-//             break;
 
         default:
             dbg("i2c_scale_requested : unknown req_type %d\n", req_type);
             reset_state();
             break;
     }
+
+    return last_data;
+
+
+protocol_error:
+    i2c_slave_transmitByte(0xFF);
+    reset_state();
+    return true; // expect master to end transmission
 }
 
 
 
-void i2c_slaveSM_receive(uint8_t data) {
+bool i2c_slaveSM_receive(uint8_t data) {
+    bool nack = false;
+
     dbg("I2C received byte : %x\n", data);
     switch(status) {
         case WAITING:
@@ -120,14 +128,7 @@ void i2c_slaveSM_receive(uint8_t data) {
                 buffer_index = 0;
                 if (current_command->arg_len == 0) {
                     // no arg to get, just execute callback
-                    reply_len = current_command->callback(buffer, buffer_size);
-                    if (reply_len > 0) {
-                        status = READY; // to send data
-                        buffer_index = 0;
-                    } else {
-                        // nothing to send, we're done
-                        reset_state();
-                    }
+                    status = EXECUTE_COMMAND;
                 } else {
                     if (current_command->arg_len > buffer_size) {
                         dbg("Error : buffer is not large enough to store %d bytes for command %d\n", current_command->arg_len, current_command->code);
@@ -150,13 +151,8 @@ void i2c_slaveSM_receive(uint8_t data) {
 #endif
             buffer[buffer_index++] = data;
             if (buffer_index == current_command->arg_len) {
-                reply_len = current_command->callback(buffer, buffer_size);
-                if (reply_len > 0) {
-                    status = READY; // to send data
-                    buffer_index = 0;
-                } else {
-                    reset_state();
-                }
+                // all args received, execute callback
+                status = EXECUTE_COMMAND;
             }
             break;
 
@@ -164,11 +160,26 @@ void i2c_slaveSM_receive(uint8_t data) {
             dbg("Got data while state not WAITING nor READING_ARGS (status == %d)\n", status);
             reset_state();
     }
+
+    if (status == EXECUTE_COMMAND) {
+        i2c_slave_busy();
+        reply_len = current_command->callback(buffer, buffer_size);
+        i2c_slave_ready();
+        if (reply_len > 0) {
+            status = READY; // to send data
+            buffer_index = 0;
+        } else {
+            // nothing to send, we're done
+            reset_state();
+        }
+    }
+
+    return nack;
 }
 
 
 
-void i2c_slaveSM_init(uint8_t address,
+void i2c_slaveSM_init(uint8_t address, uint32_t frequency,
                       i2c_slaveSM_command_t *i2c_commands,
                       unsigned int i2c_commands_size,
                       uint8_t *params_buffer,
@@ -181,6 +192,14 @@ void i2c_slaveSM_init(uint8_t address,
     i2c_slave_setCallbacks(NULL,
                            i2c_slaveSM_receive,
                            i2c_slaveSM_requested);
+    i2c_baud_config_t params = i2c_baud_getparams(F_CPU,
+                                                  frequency);
+    dbg("I2C Baud parameters:\n");
+    dbg("Requested freq = %lu bd, real freq = %lu bd (error = %lu Bd)\n", frequency, params.frequency, params.error);
+    uint8_t prescaler[] = {1, 4, 16, 64};
+    dbg("TWBR = 0x%x (%u), PreScaler = %u (index=%u)\n", params.twbr, params.twbr, prescaler[params.ps], params.ps);
+
+    i2c_init(params);
     i2c_slave_init(address);
 
     reset_state();
