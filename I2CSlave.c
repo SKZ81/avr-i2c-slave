@@ -201,7 +201,7 @@ uint8_t i2c_master_init(uint8_t slave_address, i2c_master_mode_t mode) {
     return 0;
 }
 
-uint8_t i2c_master_write(uint8_t data)
+uint8_t i2c_master_write(uint8_t data, bool last_data)
 {
     check_i2c_conf();
     if (slave_operating)  {return(42);} // TODO PROPER ERROR CODE
@@ -211,7 +211,7 @@ uint8_t i2c_master_write(uint8_t data)
     // load data into data register
     TWDR = data;
     // start transmission of data
-    TWCR = (1<<TWINT) | (1<<TWEN);
+    TWCR = (1<<TWINT) | (1<<TWEN) | (last_data ? : _BV(TWEA) : 0);
     // wait for end of transmission
     while( !(TWCR & (1<<TWINT)) );
 
@@ -221,7 +221,7 @@ uint8_t i2c_master_write(uint8_t data)
     return 0;
 }
 
-uint8_t i2c_master_read(uint8_t *data) {
+uint8_t i2c_master_read(uint8_t *data , bool last_data) {
     check_i2c_conf();
 
     if (slave_operating)  {return(2);}
@@ -230,7 +230,7 @@ uint8_t i2c_master_read(uint8_t *data) {
 
     TWCR = (1<<TWINT) | (1<<TWEN); //| (1<<TWEA) for multiple bytes read.
 
-    while( !(TWCR & (1<<TWINT)) );
+    while( !(TWCR & (1<<TWINT)) ) | (last_data ? : _BV(TWEA) : 0);
     if ((TW_STATUS) != TW_MR_DATA_NACK)
         return MASTER_RCV_NACKED_BY_SLAVE;
 

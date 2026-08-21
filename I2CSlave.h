@@ -84,9 +84,9 @@ typedef enum {
 
 uint8_t i2c_master_init(uint8_t slave_addressed, i2c_master_mode_t mode);
 
-uint8_t i2c_master_write(uint8_t data);
+uint8_t i2c_master_write(uint8_t data, bool last_data);
 
-uint8_t i2c_master_read(uint8_t *data);
+uint8_t i2c_master_read(uint8_t *data, bool last_data);
 
 void i2c_master_done();
 
