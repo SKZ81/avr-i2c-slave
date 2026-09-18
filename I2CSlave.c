@@ -10,6 +10,7 @@
 #define MASTER_BIT 4
 #define WAIT_BIT   5
 
+// TODO use another macro name like I2C_DEBUG_PINS
 #if DEBUG
     #define dbg_ISR_ON()      DEBUG_PORT |= _BV(ISR_BIT)
     #define dbg_ISR_OFF()     DEBUG_PORT &= ~_BV(ISR_BIT)
@@ -168,7 +169,8 @@ uint8_t i2c_master_init(uint8_t slave_address, i2c_master_mode_t mode) {
     dbg_master_ON();
 
     // wait for end of transmission
-    while( !(TWCR & (1<<TWINT)) );
+    while( !(TWCR & (1<<TWINT)) ) dbg_toggle_wait();
+    dbg_wait_ON();
     dbg_master_OFF();
 
     // check if the (repeated) start condition was successfully transmitted
@@ -187,16 +189,15 @@ uint8_t i2c_master_init(uint8_t slave_address, i2c_master_mode_t mode) {
 
     // wait for end of transmission
     while( !(TWCR & (1<<TWINT)) ) dbg_toggle_wait();
-    dbg_master_ON();
     dbg_wait_ON();
 
     // check if the device has acknowledged the READ / WRITE mode
     if ( (mode == MasterTransmit) && (TW_STATUS != TW_MT_SLA_ACK) )
-        return MASTER_TRM_NACKED_BY_SLAVE;
+        return MASTER_TRM_SLA_NACKED;
     if ( (mode == MasterReceive) && (TW_STATUS != TW_MR_SLA_ACK) )
-        return MASTER_RCV_NACKED_BY_SLAVE;
+        return MASTER_RCV_SLA_NACKED;
 
-
+    dbg_master_ON();
     i2c_master_inited = true;
     return 0;
 }
@@ -208,16 +209,19 @@ uint8_t i2c_master_write(uint8_t data, bool last_data)
     if (!i2c_master_inited)
         return MASTER_NOT_INITED;
 
+    dbg_master_OFF();
     // load data into data register
     TWDR = data;
     // start transmission of data
-    TWCR = (1<<TWINT) | (1<<TWEN) | (last_data ? : _BV(TWEA) : 0);
+    TWCR = (1<<TWINT) | (1<<TWEN);
     // wait for end of transmission
-    while( !(TWCR & (1<<TWINT)) );
+    while( !(TWCR & (1<<TWINT)) ) dbg_toggle_wait();
+    dbg_wait_ON();
 
-    if( (TW_STATUS) != TW_MT_DATA_ACK )
-        return MASTER_TRM_NACKED_BY_SLAVE;
+    if( TW_STATUS != TW_MT_DATA_ACK && !last_data)
+        return MASTER_TRM_STOPPED_BY_SLAVE;
 
+    dbg_master_ON();
     return 0;
 }
 
@@ -228,23 +232,30 @@ uint8_t i2c_master_read(uint8_t *data , bool last_data) {
     if (!i2c_master_inited)
         return MASTER_NOT_INITED;
 
-    TWCR = (1<<TWINT) | (1<<TWEN); //| (1<<TWEA) for multiple bytes read.
+    dbg_master_OFF();
+    TWCR = (1<<TWINT) | (1<<TWEN) | (last_data ? 0 : _BV(TWEA));
 
-    while( !(TWCR & (1<<TWINT)) ) | (last_data ? : _BV(TWEA) : 0);
-    if ((TW_STATUS) != TW_MR_DATA_NACK)
-        return MASTER_RCV_NACKED_BY_SLAVE;
+    while ( !(TWCR & (1<<TWINT)) ) dbg_toggle_wait();
+    dbg_wait_ON();
+
+    if ( (TW_STATUS != TW_MR_DATA_ACK  && !last_data) ||
+         (TW_STATUS != TW_MR_DATA_NACK &&  last_data) )
+        return MASTER_RCV_ERROR;
 
     *data = TWDR;
 
+    dbg_master_ON();
     return 0;
 }
 
 void i2c_master_done() {
+    dbg_master_OFF();
     // transmit STOP condition
     TWCR = (1<<TWINT) | (1<<TWSTO) | (1<<TWEN);
     // enable interrupt if slave address inited
     if (TWAR) TWCR |= (1<<TWIE);
 
+    dbg_master_ON();
     i2c_master_inited = false;
 }
 
@@ -262,9 +273,9 @@ void i2c_master_done() {
 
 ISR(TWI_vect)
 {
-#if DEBUG
-  DEBUG_PORT &= ~_BV(ISR_BIT);
-#endif
+  dbg_ISR_OFF();
+  dbg_wait_OFF();
+
   bool last_data = false;
 
   switch(TW_STATUS)
@@ -285,6 +296,8 @@ ISR(TWI_vect)
       break;
     case TW_SR_DATA_NACK:              // 0x88
       // data received, NACK returned
+      // Do NOT run the recv callback, keep last_data == false to reenable the bus
+      break;
     case TW_SR_DATA_ACK:               // 0xB8
       // data received, ACK returned
       if (i2c_slave_recv)
@@ -322,11 +335,13 @@ ISR(TWI_vect)
     default:
       break;
   }
-
+  if (last_data) {
+      dbg_wait_OFF();
+  } else {
+      dbg_wait_ON();
+  }
   // Set TWI status for next step.
-  TWCR = (1<<TWIE) | (1<<TWINT) | (1<<TWEN) | (last_data) ? 0 : (1<<TWEA);
+  TWCR = (1<<TWIE) | (1<<TWINT) | (1<<TWEN) | ((last_data) ? 0 : (1<<TWEA));
 
-#if DEBUG
-  DEBUG_PORT |= _BV(ISR_BIT);
-#endif
-} 
+  dbg_ISR_ON();
+}

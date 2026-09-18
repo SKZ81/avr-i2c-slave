@@ -11,12 +11,14 @@ extern "C" {
 #endif
 
 // Error code returned by following functions (when returning uint8_t)
-#define OK                         0
-#define I2C_NOT_CONFIGURED         1
-#define SLAVE_CALLBACKS_NOT_SET    2 // At least one callback must be set
-#define MASTER_NOT_INITED          3 // can't enable Master mode while slave is transmitting or reveiving
-#define MASTER_TRM_NACKED_BY_SLAVE 4
-#define MASTER_RCV_NACKED_BY_SLAVE 5
+#define OK                          0
+#define I2C_NOT_CONFIGURED          1
+#define SLAVE_CALLBACKS_NOT_SET     2 // At least one callback must be set
+#define MASTER_NOT_INITED           3 // can't enable Master mode while slave is transmitting or reveiving
+#define MASTER_TRM_SLA_NACKED       4 // NACK on SLA+W
+#define MASTER_TRM_STOPPED_BY_SLAVE 5 // NACK on DATA
+#define MASTER_RCV_SLA_NACKED       6 // NACK on SLA+R
+#define MASTER_RCV_ERROR            7 // ???
 // #define
 
 // used as argument to call request callback :
