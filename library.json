@@ -1,0 +1,13 @@
+{
+    "name": "avr-i2c-slave",
+    "version": "1.0.0",
+    "build": {
+        "srcDir": ".",
+        "srcFilter": [
+            "+<*.c>",
+            "+<*.cpp>",
+            "-<main.c>",
+            "-<test/>"
+        ]
+    }
+}
