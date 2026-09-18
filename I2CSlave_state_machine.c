@@ -162,9 +162,7 @@ bool i2c_slaveSM_receive(uint8_t data) {
     }
 
     if (status == EXECUTE_COMMAND) {
-        i2c_slave_busy();
         reply_len = current_command->callback(buffer, buffer_size);
-        i2c_slave_ready();
         if (reply_len > 0) {
             status = READY; // to send data
             buffer_index = 0;
